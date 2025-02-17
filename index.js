@@ -1,54 +1,70 @@
-require("dotenv").config();
 const express = require("express");
-const { Pool } = require("pg");
+const dotenv = require("dotenv");
+const axios = require("axios");
+const movieRoutes = require("./routes/movieRoutes");
+const errorMiddleware = require("./middlewares/errorMiddleware");
+const prisma = require("./prismaClient");
+
+dotenv.config();
 
 const app = express();
+const TMDB_API_KEY = process.env.TMDB_API_KEY;
+const TMDB_BASE_URL = "https://api.themoviedb.org/3";
+
+// Middleware to parse JSON requests
 app.use(express.json());
-app.use(require("cors")());
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
-
-// TMDB API Endpoint
-app.get("/trending", async (req, res) => {
+// TMDb Routes
+app.get("/tmdb/trending", async (req, res) => {
   try {
-    const tmdbResponse = await fetch(
-      `https://api.themoviedb.org/3/trending/movie/day?api_key=${process.env.TMDB_API_KEY}`
-    );
-    const data = await tmdbResponse.json();
-    res.json(data);
+    const response = await axios.get(`${TMDB_BASE_URL}/trending/movie/week`, {
+      params: { api_key: TMDB_API_KEY },
+    });
+    res.json(response.data);
   } catch (error) {
-    res.status(500).json({ error: "Error fetching trending movies" });
+    console.error("TMDb API Error:", error.response?.status, error.response?.data);
+    res.status(500).json({ error: "Failed to fetch trending movies" });
   }
 });
 
-// Watchlist API (Store in Database)
-app.post("/watchlist", async (req, res) => {
-  const { movie_id, title, poster_path } = req.body;
+// Search Movies Route
+app.get("/tmdb/search", async (req, res) => {
   try {
-    await pool.query("INSERT INTO watchlist (movie_id, title, poster_path) VALUES ($1, $2, $3)", [
-      movie_id,
-      title,
-      poster_path,
-    ]);
-    res.json({ message: "Movie added to watchlist" });
+    const { query } = req.query;
+    if (!query) {
+      return res.status(400).json({ error: "Query parameter is required" });
+    }
+    const response = await axios.get(`${TMDB_BASE_URL}/search/movie`, {
+      params: { api_key: TMDB_API_KEY, query },
+    });
+    res.json(response.data.results);
   } catch (error) {
-    res.status(500).json({ error: "Error adding to watchlist" });
+    console.error("TMDb Search Error:", error.response?.status, error.response?.data);
+    res.status(500).json({ error: "Failed to search movies" });
   }
 });
 
-// Get Watchlist from Database
-app.get("/watchlist", async (req, res) => {
+// Movie Details Route
+app.get("/tmdb/movie/:id", async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM watchlist");
-    res.json(result.rows);
+    const { id } = req.params;
+    const response = await axios.get(`${TMDB_BASE_URL}/movie/${id}`, {
+      params: { api_key: TMDB_API_KEY },
+    });
+    res.json(response.data);
   } catch (error) {
-    res.status(500).json({ error: "Error fetching watchlist" });
+    console.error("TMDb Movie Details Error:", error.response?.status, error.response?.data);
+    res.status(500).json({ error: "Failed to fetch movie details" });
   }
 });
-console.log("Starting server...");
+
+// Use movie routes
+app.use("/movies", movieRoutes);
+
+// Error handling middleware
+app.use(errorMiddleware);
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
